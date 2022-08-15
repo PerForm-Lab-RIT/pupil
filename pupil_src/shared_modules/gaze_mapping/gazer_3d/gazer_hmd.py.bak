@@ -160,7 +160,12 @@ class GazerHMD3D(Gazer3D):
         )
         # match pupil to reference data (left, right, and binocular)
         matches = self.match_pupil_to_ref(pupil_data, ref_data)
+        print(ref_data)
         # Save to file
+        #fm.Persistent_Dict()
+        #dict_representation = {"version": self.version, "data": data}
+        #os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        #fm.save_object(dict_representation, file_path)
         for plugin in self.g_pool.plugins:
             if Plugin_List._is_same_class(plugin, Recorder):
                 dict_representation = {"version": str(self.g_pool.version), "data": ref_data}
