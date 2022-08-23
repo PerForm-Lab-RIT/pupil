@@ -184,6 +184,56 @@ class GazerHMD3D(Gazer3D):
         }
 
 
+class PosthocModelHMD3D_Binocular(Model3D_Binocular):
+    def _fit(self, X, Y):
+        assert X.shape[1] == _BINOCULAR_FEATURE_COUNT, X
+        unprojected_ref_points = Y
+        
+        eyeid_left = X[:, _MONOCULAR_EYEID]
+        sphere_pos1 = X[-1, _MONOCULAR_SPHERE_CENTER]  # last pupil sphere center
+        pupil1_normals = X[:, _MONOCULAR_PUPIL_NORMAL]
+
+        eyeid_right = X[:, _BINOCULAR_EYEID]
+        sphere_pos0 = X[-1, _BINOCULAR_SPHERE_CENTER]  # last pupil sphere center
+        pupil0_normals = X[:, _BINOCULAR_PUPIL_NORMAL]
+
+        assert (eyeid_left == 1).all(), eyeid_left
+        assert (eyeid_right == 0).all(), eyeid_right
+        assert sphere_pos1.shape == (3,), sphere_pos1
+        assert sphere_pos0.shape == (3,), sphere_pos0
+
+        #unprojected_ref_points_old = np.load('calibpoints.npy')
+        unprojected_ref_points = Y#np.load('calibpoints.npy')
+        print(unprojected_ref_points[0])
+        #print(unprojected_ref_points_old[0])
+        res = calibrate_hmd(
+            unprojected_ref_points,
+            pupil0_normals,
+            pupil1_normals,
+            np.array([self._initial_eye_translation0, self._initial_eye_translation1])#self.eye_translations,
+        )
+        success, poses_in_world, gaze_targets_in_world = res
+        if not success:
+            raise FitDidNotConvergeError
+
+        eye0_pose, eye1_pose = poses_in_world
+
+        eye0_cam_pose_in_world = get_eye_cam_pose_in_world(eye0_pose, sphere_pos0)
+        eye1_cam_pose_in_world = get_eye_cam_pose_in_world(eye1_pose, sphere_pos1)
+
+        all_observations = [unprojected_ref_points, pupil0_normals, pupil1_normals]
+        nearest_points = calculate_nearest_points_to_targets(
+            all_observations, [np.zeros(6), *poses_in_world], gaze_targets_in_world
+        )
+        nearest_points_world, nearest_points_eye0, nearest_points_eye1 = nearest_points
+
+        params = {
+            "eye_camera_to_world_matrix0": eye0_cam_pose_in_world.tolist(),
+            "eye_camera_to_world_matrix1": eye1_cam_pose_in_world.tolist(),
+        }
+        return params
+
+    
 class PosthocGazerHMD3D(Gazer3D):
     label = "Post-hoc HMD 3D"
 
@@ -194,3 +244,89 @@ class PosthocGazerHMD3D(Gazer3D):
     @classmethod
     def _gazer_description_text(cls) -> str:
         return "Gaze mapping built specifically for HMD-Eyes."
+    
+    def __init__(self, g_pool, *, posthoc_calib=False, calib_data=None, params=None):
+        self.posthoc_calib = posthoc_calib
+        super().__init__(g_pool, calib_data=calib_data, params=params)
+    
+    def _init_binocular_model(self) -> Model:
+        if self.posthoc_calib:
+            return PosthocModelHMD3D_Binocular(
+                intrinsics=self.g_pool.capture.intrinsics,
+                initial_depth=self.ref_depth_hardcoded,
+                initial_eye_translation0=self.eye0_hardcoded_translation,
+                initial_eye_translation1=self.eye1_hardcoded_translation,
+            )
+        else:
+            return Model3D_Binocular(
+                intrinsics=self.g_pool.capture.intrinsics,
+                initial_depth=self.ref_depth_hardcoded,
+                initial_eye_translation0=self.eye0_hardcoded_translation,
+                initial_eye_translation1=self.eye1_hardcoded_translation,
+            )
+    
+    def fit_on_calib_data(self, calib_data):
+        if not self.posthoc_calib:
+            # extract reference data
+            ref_data = calib_data["ref_list"]
+            # extract and filter pupil data
+            pupil_data = calib_data["pupil_list"]
+            pupil_data = self.filter_pupil_data(
+                pupil_data, self.g_pool.min_calibration_confidence
+            )
+            # match pupil to reference data (left, right, and binocular)
+            matches = self.match_pupil_to_ref(pupil_data, ref_data)
+            if matches.binocular[0]:
+                self._fit_binocular_model(self.binocular_model, matches.binocular)
+                params = self.binocular_model.get_params()
+                self.left_model.set_params(
+                    eye_camera_to_world_matrix=params["eye_camera_to_world_matrix1"],
+                    gaze_distance=self.binocular_model.last_gaze_distance,
+                )
+                self.right_model.set_params(
+                    eye_camera_to_world_matrix=params["eye_camera_to_world_matrix0"],
+                    gaze_distance=self.binocular_model.last_gaze_distance,
+                )
+                self.left_model.binocular_model = self.binocular_model
+                self.right_model.binocular_model = self.binocular_model
+            else:
+                raise NotEnoughDataError
+        else:
+            #ref_data = calib_data["ref_list"]
+            ref_data = self.g_pool.realtime_ref
+            if ref_data is None:
+                ref_data = calib_data["ref_list"]
+            # extract and filter pupil data
+            pupil_data = calib_data["pupil_list"]
+            pupil_data = self.filter_pupil_data(
+                pupil_data, self.g_pool.min_calibration_confidence
+            )
+            # match pupil to reference data (left, right, and binocular)
+            matches = self.match_pupil_to_ref(pupil_data, ref_data)
+            if matches.binocular[0]:
+                self._fit_binocular_model(self.binocular_model, matches.binocular)
+                params = self.binocular_model.get_params()
+                self.left_model.set_params(
+                    eye_camera_to_world_matrix=params["eye_camera_to_world_matrix1"],
+                    gaze_distance=self.binocular_model.last_gaze_distance,
+                )
+                self.right_model.set_params(
+                    eye_camera_to_world_matrix=params["eye_camera_to_world_matrix0"],
+                    gaze_distance=self.binocular_model.last_gaze_distance,
+                )
+                self.left_model.binocular_model = self.binocular_model
+                self.right_model.binocular_model = self.binocular_model
+            else:
+                raise NotEnoughDataError
+            #GazerBase.fit_on_calib_data(self, calib_data)
+            #params = self.binocular_model.get_params()
+            #self.left_model.set_params(
+            #    eye_camera_to_world_matrix=params["eye_camera_to_world_matrix1"],
+            #    gaze_distance=self.binocular_model.last_gaze_distance,
+            #)
+            #self.right_model.set_params(
+            #    eye_camera_to_world_matrix=params["eye_camera_to_world_matrix0"],
+            #    gaze_distance=self.binocular_model.last_gaze_distance,
+            #)
+            #self.left_model.binocular_model = self.binocular_model
+            #self.right_model.binocular_model = self.binocular_model

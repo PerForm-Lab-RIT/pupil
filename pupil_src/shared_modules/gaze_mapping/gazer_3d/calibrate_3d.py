@@ -20,6 +20,26 @@ eye1_hardcoded_translation = np.array([-40, 15, -20])
 
 residual_threshold = 1e3
 
+"""
+hardcoded_unity_ref_points = np.array([[0,     0,    0.6],
+                                       [0,     0,    1.0],
+                                       [0,     0,    2.0],
+                                       [0.2,   0.0,  0.6],
+                                       [0.2,   0.0,  1.0],
+                                       [0.4,   0.0,  2.0],
+                                       [0.1,   0.2,  0.6],
+                                       [0.1,   0.2,  1.0],
+                                       [0.1,   0.4,  2.0],
+                                       [-0.1,  0.1,  0.6],
+                                       [-0.2,  0.1,  1.0],
+                                       [-0.3,  0.2,  2.0],
+                                       [-0.1, -0.1,  0.6],
+                                       [-0.2, -0.1,  1.0],
+                                       [-0.3, -0.2,  2.0],
+                                       [0.1,  -0.2,  0.6],
+                                       [0.1,  -0.2,  1.0],
+                                       [0.1,  -0.4,  2.0]])
+"""    
 
 class SphericalCamera:
     def __init__(
@@ -38,7 +58,7 @@ def calibrate_binocular(
     pupil1_normals,
     initial_depth,
     initial_translation0,
-    initial_translation1,
+    initial_translation1
 ):
     """Determine the poses of the eyes and 3d gaze points by solving a specific
     least-squares minimization
@@ -62,6 +82,8 @@ def calibrate_binocular(
     initial_rotation1 = utils.get_initial_eye_camera_rotation(
         pupil1_normals, unprojected_ref_points
     )
+    #initial_translation0 = eye0_hardcoded_translation
+    #initial_translation1 = eye1_hardcoded_translation
 
     # world cam and eyes are viewed as spherical cameras of unit radius
     world = SphericalCamera(
@@ -120,8 +142,11 @@ def calibrate_monocular(
     initial_rotation_matrix, _ = utils.find_rigid_transform(
         unprojected_ref_points, pupil_normals
     )
+    hardcoded_translation = (
+        eye0_hardcoded_translation if pupil_id == 0 else eye1_hardcoded_translation
+    )
     initial_rotation = cv2.Rodrigues(initial_rotation_matrix)[0].ravel()
-    initial_translation = -np.dot(initial_rotation_matrix, initial_translation)
+    initial_translation = -np.dot(initial_rotation_matrix, hardcoded_translation)
 
     # world cam and eye are viewed as spherical cameras of unit radius
     world = SphericalCamera(

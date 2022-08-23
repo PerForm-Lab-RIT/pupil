@@ -192,6 +192,10 @@ class GazerBase(abc.ABC, Plugin):
         self, g_pool, *, calib_data=None, params=None, raise_calibration_error=False
     ):
         super().__init__(g_pool)
+
+        from gaze_producer import controller, model
+        from methods import normalize
+
         if None not in (calib_data, params):
             raise ValueError("`calib_data` and `params` are mutually exclusive")
 
@@ -278,8 +282,17 @@ class GazerBase(abc.ABC, Plugin):
             raise NotEnoughReferenceDataError
         # match pupil to reference data (left, right, and binocular)
         matches = self.match_pupil_to_ref(pupil_data, ref_data)
+        #try:
+        #    realtime_ref_points = self.g_pool.realtime_ref
+        #    if realtime_ref_points is not None:
+        #        binocular_matches = self.match_pupil_to_ref(pupil_data, realtime_ref_points)
+        #    else:
+        #        binocular_matches = self.match_pupil_to_ref(pupil_data, ref_data)
+        #except:
+        #    binocular_matches = self.match_pupil_to_ref(pupil_data, ref_data)
+        binocular_matches = self.match_pupil_to_ref(pupil_data, ref_data)
         if matches.binocular[0]:
-            self._fit_binocular_model(self.binocular_model, matches.binocular)
+            self._fit_binocular_model(self.binocular_model, binocular_matches.binocular)
             self._fit_monocular_model(self.right_model, matches.right)
             self._fit_monocular_model(self.left_model, matches.left)
         elif matches.right[0]:
@@ -337,7 +350,11 @@ class GazerBase(abc.ABC, Plugin):
 
     def _fit_binocular_model(self, model: Model, matched_data: T.Iterable):
         X, Y = self.extract_features_from_matches_binocular(matched_data)
-        model.fit(X, Y)
+        try:
+            model.fit(X, Y)
+        except Exception as e:
+            print("Error fitting binocular model to calibration points:", e, type(e))
+            exit()
 
     def _fit_monocular_model(self, model: Model, matched_data: T.Iterable):
         X, Y = self.extract_features_from_matches_monocular(matched_data)
@@ -359,7 +376,7 @@ class GazerBase(abc.ABC, Plugin):
 
     def extract_features_from_matches_monocular(self, monocular_matches):
         ref, pupil = monocular_matches
-        Y = self._extract_reference_features(ref)
+        Y = self._extract_reference_features(ref, monocular=True)
         X = self._extract_pupil_features(pupil)
         return X, Y
 
@@ -370,7 +387,6 @@ class GazerBase(abc.ABC, Plugin):
 
         matches = (self.matcher.on_pupil_datum(datum) for datum in pupil_data)
         matches = itertools.chain.from_iterable(matches)
-
         yield from self.predict(matches)
 
 

@@ -28,6 +28,7 @@ from methods import normalize
 from .calibrate_3d import (
     calibrate_binocular,
     calibrate_monocular,
+    calibrate_hmd
 )
 from .utils import (
     calculate_nearest_points_to_targets,
@@ -394,12 +395,22 @@ class Gazer3D(GazerBase):
         assert pupil_features.shape == expected_shaped, pupil_features
         return pupil_features
 
-    def _extract_reference_features(self, ref_data) -> np.ndarray:
-        ref_2d = np.array([ref["screen_pos"] for ref in ref_data])
-        assert ref_2d.shape == (len(ref_data), 2), ref_2d
-        ref_3d = self.g_pool.capture.intrinsics.unprojectPoints(ref_2d, normalize=True)
-        assert ref_3d.shape == (len(ref_data), 3), ref_3d
-        return ref_3d
+    def _extract_reference_features(self, ref_data, monocular=False) -> np.ndarray:
+        try:
+            if monocular or self.g_pool.realtime_ref is None:
+                ref_2d = np.array([ref["screen_pos"] for ref in ref_data])
+                assert ref_2d.shape == (len(ref_data), 2), ref_2d
+                ref_3d = self.g_pool.capture.intrinsics.unprojectPoints(ref_2d, normalize=True)
+                assert ref_3d.shape == (len(ref_data), 3), ref_3d
+                return ref_3d
+            else:
+                return np.array([ref["screen_pos"] for ref in ref_data])
+        except:
+            ref_2d = np.array([ref["screen_pos"] for ref in ref_data])
+            assert ref_2d.shape == (len(ref_data), 2), ref_2d
+            ref_3d = self.g_pool.capture.intrinsics.unprojectPoints(ref_2d, normalize=True)
+            assert ref_3d.shape == (len(ref_data), 3), ref_3d
+            return ref_3d
 
     def predict(
         self, matched_pupil_data: T.Iterator[T.List["Pupil"]]
