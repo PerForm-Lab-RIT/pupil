@@ -245,9 +245,9 @@ class PosthocGazerHMD3D(Gazer3D):
     def _gazer_description_text(cls) -> str:
         return "Gaze mapping built specifically for HMD-Eyes."
     
-    def __init__(self, g_pool, *, posthoc_calib=False, calib_data=None, params=None):
+    def __init__(self, g_pool, *, posthoc_calib=False, calib_data=None, params=None, raise_calibration_error=False):
         self.posthoc_calib = posthoc_calib
-        super().__init__(g_pool, calib_data=calib_data, params=params)
+        super().__init__(g_pool, calib_data=calib_data, params=params, raise_calibration_error=raise_calibration_error)
     
     def _init_binocular_model(self) -> Model:
         if self.posthoc_calib:
