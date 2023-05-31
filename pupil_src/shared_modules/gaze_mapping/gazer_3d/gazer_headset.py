@@ -227,6 +227,7 @@ class Model3D_Binocular(Model3D):
             initial_translation1=self._initial_eye_translation1,
         )
         success, poses_in_world, gaze_targets_in_world = res
+
         if not success:
             raise FitDidNotConvergeError
 
@@ -349,7 +350,11 @@ class Gazer3D(GazerBase):
     eye0_hardcoded_translation = 20, 15, -20
     eye1_hardcoded_translation = -40, 15, -20
     ref_depth_hardcoded = 500
-
+    
+    def __init__(self, g_pool, *, posthoc_calib=False, calib_data=None, params=None):
+        self.posthoc_calib = posthoc_calib
+        super().__init__(g_pool, calib_data=calib_data, params=params)
+    
     @classmethod
     def _gazer_description_text(cls) -> str:
         return "3D gaze mapping: default method; able to compensate for small movements of the headset (slippage); uses 3d eye model as input."
@@ -377,9 +382,19 @@ class Gazer3D(GazerBase):
         )
 
     def fit_on_calib_data(self, calib_data):
-        super().fit_on_calib_data(calib_data)
-        self.left_model.binocular_model = self.binocular_model
-        self.right_model.binocular_model = self.binocular_model
+        if not self.posthoc_calib:
+            super().fit_on_calib_data(calib_data)
+            self.left_model.binocular_model = self.binocular_model
+            self.right_model.binocular_model = self.binocular_model
+        else:
+            ref_data = self.g_pool.realtime_ref
+            if ref_data is None:
+                ref_data = calib_data["ref_list"]
+            # extract and filter pupil data
+            pupil_data = calib_data["pupil_list"]
+            super().fit_on_calib_data({"ref_list": ref_data, "pupil_list": pupil_data})
+            self.left_model.binocular_model = self.binocular_model
+            self.right_model.binocular_model = self.binocular_model
 
     def _extract_pupil_features(self, pupil_data) -> np.ndarray:
         pupil_features = np.array(
@@ -397,7 +412,7 @@ class Gazer3D(GazerBase):
 
     def _extract_reference_features(self, ref_data, monocular=False) -> np.ndarray:
         try:
-            if monocular or self.g_pool.realtime_ref is None:
+            if self.g_pool.realtime_ref is None:# or monocular:
                 ref_2d = np.array([ref["screen_pos"] for ref in ref_data])
                 assert ref_2d.shape == (len(ref_data), 2), ref_2d
                 ref_3d = self.g_pool.capture.intrinsics.unprojectPoints(ref_2d, normalize=True)

@@ -1,0 +1,9 @@
+Collecting pyglui
+  Using cached pyglui-1.31.0.post2-cp36-cp36m-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (6.8 MB)
+Requirement already satisfied: numpy in /home/kdb2713/anaconda3/envs/ritnet/lib/python3.6/site-packages (from pyglui) (1.19.5)
+Collecting cysignals
+  Using cached cysignals-1.11.2-cp36-cp36m-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (867 kB)
+Collecting Cython>=0.28
+  Using cached Cython-0.29.32-cp36-cp36m-manylinux_2_17_x86_64.manylinux2014_x86_64.manylinux_2_24_x86_64.whl (2.0 MB)
+Installing collected packages: Cython, cysignals, pyglui
+Successfully installed Cython-0.29.32 cysignals-1.11.2 pyglui-1.31.0.post2

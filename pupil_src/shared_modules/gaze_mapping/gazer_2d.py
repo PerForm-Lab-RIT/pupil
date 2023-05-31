@@ -14,6 +14,9 @@ import typing as T
 import numpy as np
 from sklearn.linear_model import LinearRegression
 
+from methods import normalize
+from .gazer_3d.utils import _clamp_norm_point
+
 from gaze_mapping.gazer_base import (
     GazerBase,
     Model,
@@ -168,6 +171,10 @@ class Model2D_Monocular(Model2D):
 class Gazer2D(GazerBase):
     label = "2D"
 
+    def __init__(self, g_pool, *, posthoc_calib=False, calib_data=None, params=None):
+        self.posthoc_calib = posthoc_calib
+        super().__init__(g_pool, calib_data=calib_data, params=params)
+
     @classmethod
     def _gazer_description_text(cls) -> str:
         return "2D gaze mapping: use only in controlled conditions; sensitive to movement of the headset (slippage); uses 2d pupil detection result as input."
@@ -186,10 +193,58 @@ class Gazer2D(GazerBase):
         assert pupil_features.shape == (len(pupil_data), _MONOCULAR_FEATURE_COUNT)
         return pupil_features
 
-    def _extract_reference_features(self, ref_data) -> np.ndarray:
-        ref_features = np.array([r["norm_pos"] for r in ref_data])
-        assert ref_features.shape == (len(ref_data), _REFERENCE_FEATURE_COUNT)
-        return ref_features
+    def _extract_reference_features(self, ref_data, monocular=False) -> np.ndarray:
+        try:
+            if self.g_pool.realtime_ref is None:
+                ref_features = np.array([r["norm_pos"] for r in ref_data])
+                assert ref_features.shape == (len(ref_data), _REFERENCE_FEATURE_COUNT)
+                return ref_features
+            else:
+                def normalize_point(ref_pt):
+                    screen_pos_image_point = ref_pt.reshape(-1, 2)
+                    screen_pos_image_point = normalize(
+                        screen_pos_image_point[0], self.g_pool.capture.intrinsics.resolution, flip_y=True
+                    )
+                    return _clamp_norm_point(screen_pos_image_point)
+
+                #unprojected = ref_data[int(len(ref_data)/2)]['screen_pos']
+                #projected = self.g_pool.capture.intrinsics.projectPoints(np.array([unprojected]))
+                #deprojected_notnorm = self.g_pool.capture.intrinsics.unprojectPoints(projected, normalize=False)
+                #deprojected_norm = self.g_pool.capture.intrinsics.unprojectPoints(projected, normalize=True)
+                #print("UNPROJECTED:")
+                #print(unprojected)
+                #print("PROJECTED:")
+                #print(projected)
+                #print("DEPROJECTED NOTNORM:")
+                #print(deprojected_notnorm)
+                #print("DEPROJECTED NORM:")
+                #print(deprojected_norm)
+                #while True:
+                #    pass
+                projectedPoints = self.g_pool.capture.intrinsics.projectPoints(
+                    np.array([r['screen_pos'] for r in ref_data])
+                )
+                normalized_points = [normalize_point(ref_point) for ref_point in projectedPoints]
+                
+                ref_features = np.array(normalized_points)
+                assert ref_features.shape == (len(ref_data), _REFERENCE_FEATURE_COUNT)
+                return ref_features
+                #if self.intrinsics is not None:
+                #    cyclop_gaze = nearest_intersection_point - cyclop_center
+                #    self.last_gaze_distance = np.sqrt(cyclop_gaze.dot(cyclop_gaze))
+                #    image_point = self.intrinsics.projectPoints(
+                #        np.array([nearest_intersection_point])
+                #    )
+                #    image_point = image_point.reshape(-1, 2)
+                #    image_point = normalize(
+                #        image_point[0], self.intrinsics.resolution, flip_y=True
+                #    )
+                #    image_point = _clamp_norm_point(image_point)
+                #    g["norm_pos"] = image_point
+        except:
+            ref_features = np.array([r["norm_pos"] for r in ref_data])
+            assert ref_features.shape == (len(ref_data), _REFERENCE_FEATURE_COUNT)
+            return ref_features
 
     def predict(
         self, matched_pupil_data: T.Iterator[T.List["Pupil"]]
@@ -199,16 +254,18 @@ class Gazer2D(GazerBase):
             gaze_positions = ...  # Placeholder for gaze_positions
 
             if num_matched == 2:
-                if self.binocular_model.is_fitted:
+                if self.binocular_model.is_fitted and self.right_model.is_fitted and self.left_model.is_fitted:
                     right = self._extract_pupil_features([pupil_match[0]])
                     left = self._extract_pupil_features([pupil_match[1]])
                     X = np.hstack([left, right])
                     assert X.shape[1] == _BINOCULAR_FEATURE_COUNT
                     gaze_positions = self.binocular_model.predict(X).tolist()
+                    right_positions = self.right_model.predict(right).tolist()
+                    left_positions = self.left_model.predict(left).tolist()
                     topic = "gaze.2d.01."
                 else:
                     logger.debug(
-                        "Prediction failed because binocular model is not fitted"
+                        "Prediction failed because at least one model is not fitted"
                     )
             elif num_matched == 1:
                 X = self._extract_pupil_features([pupil_match[0]])
@@ -216,6 +273,8 @@ class Gazer2D(GazerBase):
                 if pupil_match[0]["id"] == 0:
                     if self.right_model.is_fitted:
                         gaze_positions = self.right_model.predict(X).tolist()
+                        right_positions = self.right_model.predict(X).tolist()
+                        left_positions = [[None, None] for i in range(len(gaze_positions))]
                         topic = "gaze.2d.0."
                     else:
                         logger.debug(
@@ -224,6 +283,8 @@ class Gazer2D(GazerBase):
                 elif pupil_match[0]["id"] == 1:
                     if self.left_model.is_fitted:
                         gaze_positions = self.left_model.predict(X).tolist()
+                        right_positions = [[None, None] for i in range(len(gaze_positions))]
+                        left_positions = self.left_model.predict(X).tolist()
                         topic = "gaze.2d.1."
                     else:
                         logger.debug(
@@ -237,10 +298,12 @@ class Gazer2D(GazerBase):
             if gaze_positions is ...:
                 continue  # Prediction failed and the reason was logged
 
-            for gaze_pos in gaze_positions:
+            for gaze_pos, right_pos, left_pos in zip(gaze_positions, right_positions, left_positions):
                 gaze_datum = {
                     "topic": topic,
                     "norm_pos": gaze_pos,
+                    "right_norm_pos": right_pos,
+                    "left_norm_pos": left_pos,
                     "confidence": np.mean([p["confidence"] for p in pupil_match]),
                     "timestamp": np.mean([p["timestamp"] for p in pupil_match]),
                     "base_data": pupil_match,
@@ -253,3 +316,34 @@ class Gazer2D(GazerBase):
         pupil_data = list(filter(lambda p: "2d" in p["method"], pupil_data))
         pupil_data = super().filter_pupil_data(pupil_data, confidence_threshold)
         return pupil_data
+
+    def fit_on_calib_data(self, calib_data):
+        if not self.posthoc_calib:
+            super().fit_on_calib_data(calib_data)
+        else:
+            #ref_data = calib_data["ref_list"]
+            ref_data = self.g_pool.realtime_ref
+            if ref_data is None:
+                ref_data = calib_data["ref_list"]
+            # extract and filter pupil data
+            pupil_data = calib_data["pupil_list"]
+            pupil_data = self.filter_pupil_data(
+                pupil_data, self.g_pool.min_calibration_confidence
+            )
+            if not pupil_data:
+                raise NotEnoughPupilDataError
+            if not ref_data:
+                raise NotEnoughReferenceDataError
+            # match pupil to reference data (left, right, and binocular)
+            matches = self.match_pupil_to_ref(pupil_data, ref_data)
+            binocular_matches = self.match_pupil_to_ref(pupil_data, ref_data)
+            if matches.binocular[0]:
+                self._fit_binocular_model(self.binocular_model, binocular_matches.binocular)
+                self._fit_monocular_model(self.right_model, matches.right)
+                self._fit_monocular_model(self.left_model, matches.left)
+            elif matches.right[0]:
+                self._fit_monocular_model(self.right_model, matches.right)
+            elif matches.left[0]:
+                self._fit_monocular_model(self.left_model, matches.left)
+            else:
+                raise NotEnoughDataError

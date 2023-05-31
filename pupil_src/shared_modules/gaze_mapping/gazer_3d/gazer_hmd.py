@@ -204,7 +204,7 @@ class PosthocModelHMD3D_Binocular(Model3D_Binocular):
 
         #unprojected_ref_points_old = np.load('calibpoints.npy')
         unprojected_ref_points = Y#np.load('calibpoints.npy')
-        print(unprojected_ref_points[0])
+
         #print(unprojected_ref_points_old[0])
         res = calibrate_hmd(
             unprojected_ref_points,
@@ -247,7 +247,7 @@ class PosthocGazerHMD3D(Gazer3D):
     
     def __init__(self, g_pool, *, posthoc_calib=False, calib_data=None, params=None):
         self.posthoc_calib = posthoc_calib
-        super().__init__(g_pool, calib_data=calib_data, params=params)
+        super().__init__(g_pool, posthoc_calib=posthoc_calib, calib_data=calib_data, params=params)
     
     def _init_binocular_model(self) -> Model:
         if self.posthoc_calib:

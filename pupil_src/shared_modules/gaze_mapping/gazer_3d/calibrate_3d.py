@@ -75,46 +75,53 @@ def calibrate_binocular(
     # Minimize reprojection-type errors by moving the 3d gaze targets and
     # adjusting the orientation of the eyes while fixing their positions.
 
-    # Find initial guess for the poses in world coordinates
-    initial_rotation0 = utils.get_initial_eye_camera_rotation(
-        pupil0_normals, unprojected_ref_points
-    )
-    initial_rotation1 = utils.get_initial_eye_camera_rotation(
-        pupil1_normals, unprojected_ref_points
-    )
-    #initial_translation0 = eye0_hardcoded_translation
-    #initial_translation1 = eye1_hardcoded_translation
+    smallest_residual = 1000
+    scales = list(np.linspace(0.7, 10, 5))  # TODO: change back to 50
+    for s in scales:
+        scaled_ref_points_3d = unprojected_ref_points * (1, -1, s)
+        # Find initial guess for the poses in world coordinates
+        initial_rotation0 = utils.get_initial_eye_camera_rotation(
+            pupil0_normals, scaled_ref_points_3d
+        )
+        initial_rotation1 = utils.get_initial_eye_camera_rotation(
+            pupil1_normals, scaled_ref_points_3d
+        )
+        #initial_translation0 = eye0_hardcoded_translation
+        #initial_translation1 = eye1_hardcoded_translation
 
-    # world cam and eyes are viewed as spherical cameras of unit radius
-    world = SphericalCamera(
-        observations=unprojected_ref_points,
-        rotation=np.zeros(3),
-        translation=np.zeros(3),
-        fix_rotation=True,
-        fix_translation=True,
-    )
-    eye0 = SphericalCamera(
-        observations=pupil0_normals,
-        rotation=initial_rotation0,
-        translation=initial_translation0,
-        fix_rotation=False,
-        fix_translation=True,
-    )
-    eye1 = SphericalCamera(
-        observations=pupil1_normals,
-        rotation=initial_rotation1,
-        translation=initial_translation1,
-        fix_rotation=False,
-        fix_translation=True,
-    )
+        # world cam and eyes are viewed as spherical cameras of unit radius
+        world = SphericalCamera(
+            observations=[scaled_ref_points_3d[i]/scaled_ref_points_3d[i][2] for i in range(len(scaled_ref_points_3d))],  # Needed for convergence
+            rotation=np.zeros(3),
+            translation=np.zeros(3),
+            fix_rotation=True,
+            fix_translation=True,
+        )
+        eye0 = SphericalCamera(
+            observations=pupil0_normals,
+            rotation=initial_rotation0,
+            translation=initial_translation0,
+            fix_rotation=False,
+            fix_translation=True,
+        )
+        eye1 = SphericalCamera(
+            observations=pupil1_normals,
+            rotation=initial_rotation1,
+            translation=initial_translation1,
+            fix_rotation=False,
+            fix_translation=True,
+        )
 
-    initial_spherical_cameras = world, eye0, eye1
-    initial_gaze_targets = unprojected_ref_points * initial_depth
+        initial_spherical_cameras = world, eye0, eye1
+        initial_gaze_targets = scaled_ref_points_3d# * initial_depth
 
-    ba = bundle_adjustment.BundleAdjustment(fix_gaze_targets=False)
-    residual, poses_in_world, gaze_targets_in_world = ba.calculate(
-        initial_spherical_cameras, initial_gaze_targets
-    )
+        ba = bundle_adjustment.BundleAdjustment(fix_gaze_targets=True)
+        residual, poses_in_world, gaze_targets_in_world = ba.calculate(
+            initial_spherical_cameras, initial_gaze_targets
+        )
+        if residual <= smallest_residual:
+            smallest_residual = residual
+            scales[-1] = s
 
     success = residual < residual_threshold
     return success, poses_in_world, gaze_targets_in_world
@@ -137,40 +144,47 @@ def calibrate_monocular(
     # Take eye as the origin and express everything in eye coordinates.
     # Minimize reprojection-type errors by moving world cam
     # while fixing the 3d gaze targets.
+    
+    smallest_residual = 1000
+    scales = list(np.linspace(0.7, 10, 5))  # TODO: change back to 50
+    for s in scales:
+        scaled_ref_points_3d = unprojected_ref_points * (1, -1, s)
+        # Find initial guess for the poses in eye coordinates
+        initial_rotation_matrix, _ = utils.find_rigid_transform(
+            scaled_ref_points_3d, pupil_normals
+        )
+        hardcoded_translation = (
+            eye0_hardcoded_translation if pupil_id == 0 else eye1_hardcoded_translation
+        )
+        initial_rotation = cv2.Rodrigues(initial_rotation_matrix)[0].ravel()
+        initial_translation = -np.dot(initial_rotation_matrix, hardcoded_translation)
 
-    # Find initial guess for the poses in eye coordinates
-    initial_rotation_matrix, _ = utils.find_rigid_transform(
-        unprojected_ref_points, pupil_normals
-    )
-    hardcoded_translation = (
-        eye0_hardcoded_translation if pupil_id == 0 else eye1_hardcoded_translation
-    )
-    initial_rotation = cv2.Rodrigues(initial_rotation_matrix)[0].ravel()
-    initial_translation = -np.dot(initial_rotation_matrix, hardcoded_translation)
+        # world cam and eye are viewed as spherical cameras of unit radius
+        world = SphericalCamera(
+            observations=[scaled_ref_points_3d[i]/scaled_ref_points_3d[i][2] for i in range(len(scaled_ref_points_3d))],
+            rotation=initial_rotation,
+            translation=initial_translation,
+            fix_rotation=False,
+            fix_translation=False,
+        )
+        eye = SphericalCamera(
+            observations=pupil_normals,
+            rotation=np.zeros(3),
+            translation=np.zeros(3),
+            fix_rotation=True,
+            fix_translation=True,
+        )
 
-    # world cam and eye are viewed as spherical cameras of unit radius
-    world = SphericalCamera(
-        observations=unprojected_ref_points,
-        rotation=initial_rotation,
-        translation=initial_translation,
-        fix_rotation=False,
-        fix_translation=False,
-    )
-    eye = SphericalCamera(
-        observations=pupil_normals,
-        rotation=np.zeros(3),
-        translation=np.zeros(3),
-        fix_rotation=True,
-        fix_translation=True,
-    )
+        initial_spherical_cameras = world, eye
+        initial_gaze_targets = pupil_normals# * initial_depth
 
-    initial_spherical_cameras = world, eye
-    initial_gaze_targets = pupil_normals * initial_depth
-
-    ba = bundle_adjustment.BundleAdjustment(fix_gaze_targets=True)
-    residual, poses_in_eye, gaze_targets_in_eye = ba.calculate(
-        initial_spherical_cameras, initial_gaze_targets
-    )
+        ba = bundle_adjustment.BundleAdjustment(fix_gaze_targets=True)
+        residual, poses_in_eye, gaze_targets_in_eye = ba.calculate(
+            initial_spherical_cameras, initial_gaze_targets
+        )
+        if residual <= smallest_residual:
+            smallest_residual = residual
+            scales[-1] = s
 
     world_pose_in_eye, eye_pose_in_eye = poses_in_eye
 
