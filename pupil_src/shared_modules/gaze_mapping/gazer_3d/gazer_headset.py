@@ -351,9 +351,9 @@ class Gazer3D(GazerBase):
     eye1_hardcoded_translation = -40, 15, -20
     ref_depth_hardcoded = 500
     
-    def __init__(self, g_pool, *, posthoc_calib=False, calib_data=None, params=None):
+    def __init__(self, g_pool, *, posthoc_calib=False, calib_data=None, params=None, raise_calibration_error=False):
         self.posthoc_calib = posthoc_calib
-        super().__init__(g_pool, calib_data=calib_data, params=params)
+        super().__init__(g_pool, calib_data=calib_data, params=params, raise_calibration_error=raise_calibration_error)
     
     @classmethod
     def _gazer_description_text(cls) -> str:
