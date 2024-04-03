@@ -196,7 +196,14 @@ class Gazer2D(GazerBase):
     def _extract_reference_features(self, ref_data, monocular=False) -> np.ndarray:
         try:
             if self.g_pool.realtime_ref is None:
-                ref_features = np.array([r["norm_pos"] for r in ref_data])
+                def normalize_point(ref_pt):
+                    screen_pos_image_point = ref_pt.reshape(-1, 2)
+                    screen_pos_image_point = normalize(
+                        screen_pos_image_point[0], self.g_pool.capture.intrinsics.resolution, flip_y=True
+                    )
+                    return _clamp_norm_point(screen_pos_image_point)
+                normalized_points = [normalize_point(ref_point) for ref_point in [np.array(r['screen_pos']) for r in ref_data]]
+                ref_features = np.array(normalized_points)
                 assert ref_features.shape == (len(ref_data), _REFERENCE_FEATURE_COUNT)
                 return ref_features
             else:
@@ -207,20 +214,6 @@ class Gazer2D(GazerBase):
                     )
                     return _clamp_norm_point(screen_pos_image_point)
 
-                #unprojected = ref_data[int(len(ref_data)/2)]['screen_pos']
-                #projected = self.g_pool.capture.intrinsics.projectPoints(np.array([unprojected]))
-                #deprojected_notnorm = self.g_pool.capture.intrinsics.unprojectPoints(projected, normalize=False)
-                #deprojected_norm = self.g_pool.capture.intrinsics.unprojectPoints(projected, normalize=True)
-                #print("UNPROJECTED:")
-                #print(unprojected)
-                #print("PROJECTED:")
-                #print(projected)
-                #print("DEPROJECTED NOTNORM:")
-                #print(deprojected_notnorm)
-                #print("DEPROJECTED NORM:")
-                #print(deprojected_norm)
-                #while True:
-                #    pass
                 projectedPoints = self.g_pool.capture.intrinsics.projectPoints(
                     np.array([r['screen_pos'] for r in ref_data])
                 )
@@ -229,18 +222,6 @@ class Gazer2D(GazerBase):
                 ref_features = np.array(normalized_points)
                 assert ref_features.shape == (len(ref_data), _REFERENCE_FEATURE_COUNT)
                 return ref_features
-                #if self.intrinsics is not None:
-                #    cyclop_gaze = nearest_intersection_point - cyclop_center
-                #    self.last_gaze_distance = np.sqrt(cyclop_gaze.dot(cyclop_gaze))
-                #    image_point = self.intrinsics.projectPoints(
-                #        np.array([nearest_intersection_point])
-                #    )
-                #    image_point = image_point.reshape(-1, 2)
-                #    image_point = normalize(
-                #        image_point[0], self.intrinsics.resolution, flip_y=True
-                #    )
-                #    image_point = _clamp_norm_point(image_point)
-                #    g["norm_pos"] = image_point
         except:
             ref_features = np.array([r["norm_pos"] for r in ref_data])
             assert ref_features.shape == (len(ref_data), _REFERENCE_FEATURE_COUNT)
